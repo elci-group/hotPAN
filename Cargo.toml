@@ -1,0 +1,50 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hotpan-core",
+    "crates/hotpan-heuristic",
+    "crates/hotpan-seal",
+    "crates/hotpan-probe",
+    "crates/hotpan-sandbox",
+    "crates/hotpan-wire",
+    "crates/hotpan-orchestrator",
+    "crates/hotpan-node",
+    "crates/hotpan-cli",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/elci-group/hotpan"
+
+[workspace.dependencies]
+hotpan-core = { path = "crates/hotpan-core" }
+hotpan-heuristic = { path = "crates/hotpan-heuristic" }
+hotpan-seal = { path = "crates/hotpan-seal" }
+hotpan-probe = { path = "crates/hotpan-probe" }
+hotpan-sandbox = { path = "crates/hotpan-sandbox" }
+hotpan-wire = { path = "crates/hotpan-wire" }
+hotpan-orchestrator = { path = "crates/hotpan-orchestrator" }
+hotpan-node = { path = "crates/hotpan-node" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
+x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
+chacha20poly1305 = "0.10"
+rand_core = { version = "0.6", features = ["getrandom"] }
+blake3 = "1"
+snow = "0.10"
+hex = "0.4"
+zeroize = "1"
+libc = "0.2"
+tempfile = "3"

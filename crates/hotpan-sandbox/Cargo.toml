@@ -1,0 +1,16 @@
+[package]
+name = "hotpan-sandbox"
+description = "hotPAN node-side execution: allowlisted, rlimit-bounded, preemptible, purgeable"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hotpan-core.workspace = true
+hotpan-seal.workspace = true
+serde.workspace = true
+blake3.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

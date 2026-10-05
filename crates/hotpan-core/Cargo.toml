@@ -1,0 +1,12 @@
+[package]
+name = "hotpan-core"
+description = "hotPAN core model: capability vectors, workloads, leases and the transient-node lifecycle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+thiserror.workspace = true

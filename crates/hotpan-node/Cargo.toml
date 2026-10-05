@@ -1,0 +1,23 @@
+[package]
+name = "hotpan-node"
+description = "hotPAN node agent: turns a device into a transient, outbound-only execution node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hotpan-core.workspace = true
+hotpan-heuristic.workspace = true
+hotpan-seal.workspace = true
+hotpan-probe.workspace = true
+hotpan-sandbox.workspace = true
+hotpan-wire.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+hotpan-orchestrator.workspace = true
+tempfile.workspace = true

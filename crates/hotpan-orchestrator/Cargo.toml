@@ -1,0 +1,23 @@
+[package]
+name = "hotpan-orchestrator"
+description = "hotPAN control plane: registry, scheduling, lease lifecycle, rescheduling on node loss"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hotpan-core.workspace = true
+hotpan-heuristic.workspace = true
+hotpan-seal.workspace = true
+hotpan-sandbox.workspace = true
+hotpan-wire.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+hotpan-node.workspace = true
+hotpan-probe.workspace = true
+tempfile.workspace = true

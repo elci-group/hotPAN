@@ -1,0 +1,13 @@
+[package]
+name = "hotpan-probe"
+description = "hotPAN device capability probing (Linux sysfs, Android/Termux) and scripted probes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hotpan-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

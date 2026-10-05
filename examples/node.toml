@@ -1,0 +1,22 @@
+# Node configuration for `hotpan node --config node.toml`.
+label = "pocket"
+max_leases = 1
+
+# Exec tasks may run only these programs (absolute paths), and only when the
+# lease also grants them. Leave empty to accept builtins only.
+allowed_programs = [
+  "/data/data/com.termux/files/usr/bin/termux-camera-photo",
+  "/data/data/com.termux/files/usr/bin/termux-location",
+]
+
+# The most any single lease may take on this device.
+[max]
+wall_ms = 60000
+cpu_ms = 60000
+memory_mb = 256
+output_bytes = 1048576
+
+# Facts the probe cannot discover.
+[device]
+site = "home"
+capabilities = ["local_data:location-history", "session:bank"]

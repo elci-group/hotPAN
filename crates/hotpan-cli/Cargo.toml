@@ -1,0 +1,31 @@
+[package]
+name = "hotpan-cli"
+description = "hotpan: orchestrate, join, submit to and simulate a hotPAN fabric"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "hotpan"
+path = "src/main.rs"
+
+[dependencies]
+hotpan-core.workspace = true
+hotpan-heuristic.workspace = true
+hotpan-seal.workspace = true
+hotpan-probe.workspace = true
+hotpan-sandbox.workspace = true
+hotpan-wire.workspace = true
+hotpan-orchestrator.workspace = true
+hotpan-node.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
