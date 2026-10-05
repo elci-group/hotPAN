@@ -12,6 +12,9 @@
 //! codec, used only beneath the secure layer and in tests.
 
 #![forbid(unsafe_code)]
+// No panics reachable from peer input (DIRECTIVE P1.6): fallible paths
+// return errors; the few infallible serializations carry a local allow.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 use hotpan_core::*;
 use hotpan_sandbox::{Outcome, PurgeReceipt};
@@ -19,10 +22,12 @@ use hotpan_seal::{Attestation, Envelope, PublicKeys, SignedLease};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+#[cfg(test)]
+mod props;
 pub mod secure;
-pub use secure::{initiate, respond, SecureReader, SecureWriter, Session};
+pub use secure::{initiate, respond, SecureReader, SecureWriter, Session, CLIENT_FRAME, HANDSHAKE_FRAME};
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 pub const MAX_FRAME: usize = 8 << 20;
 pub const DEFAULT_PORT: u16 = 7450;
 
@@ -137,6 +142,10 @@ pub enum NodeMsg {
     },
     /// The node is leaving the fabric on purpose.
     Withdraw,
+    /// Reply to [`OrchMsg::Ping`], echoing its nonce.
+    Pong {
+        nonce: u64,
+    },
 }
 
 // Messages are built once and serialized immediately; boxing buys nothing.
@@ -144,11 +153,29 @@ pub enum NodeMsg {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum OrchMsg {
-    Registered { node_id: NodeId, trust: TrustLevel },
-    Provision { lease: SignedLease, task: Envelope },
-    Revoke { lease_id: LeaseId, reason: RevokeReason },
-    Purge { lease_id: LeaseId },
-    Refused { reason: String },
+    Registered {
+        node_id: NodeId,
+        trust: TrustLevel,
+    },
+    Provision {
+        lease: SignedLease,
+        task: Envelope,
+    },
+    Revoke {
+        lease_id: LeaseId,
+        reason: RevokeReason,
+    },
+    Purge {
+        lease_id: LeaseId,
+    },
+    Refused {
+        reason: String,
+    },
+    /// Keepalive. A node that hears nothing from the control plane for
+    /// several heartbeat intervals treats it as gone and dissolves everything.
+    Ping {
+        nonce: u64,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

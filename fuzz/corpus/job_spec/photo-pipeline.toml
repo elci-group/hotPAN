@@ -1,0 +1,35 @@
+# A job is an execution graph of fragments. Each fragment says what it needs;
+# the orchestrator finds whichever device currently has comparative advantage.
+name = "photo-pipeline"
+max_attempts = 3
+
+[[fragments]]
+id = "capture"
+profile = "sensor_bound"
+requires = ["camera"]
+min_trust = "paired"
+task = { type = "exec", program = "/data/data/com.termux/files/usr/bin/termux-camera-photo", args = ["capture.jpg"] }
+ceiling = { wall_ms = 15000, cpu_ms = 5000, memory_mb = 128, output_bytes = 65536 }
+
+[[fragments]]
+id = "geotag"
+profile = "sensor_bound"
+requires = ["gps"]
+# Location history never leaves the phone that holds it.
+privacy = { kind = "must_stay_on", tag = "location-history" }
+task = { type = "exec", program = "/data/data/com.termux/files/usr/bin/termux-location", args = ["-p", "network"] }
+
+[[fragments]]
+id = "tile-0"
+profile = "parallel_low_relational"
+task = { type = "builtin", op = "prime_count", upto = 2000000 }
+
+[[fragments]]
+id = "tile-1"
+profile = "parallel_low_relational"
+task = { type = "builtin", op = "prime_count", upto = 3000000 }
+
+[[fragments]]
+id = "digest"
+profile = "compute_bound"
+task = { type = "builtin", op = "blake3", data = "frame-0001" }

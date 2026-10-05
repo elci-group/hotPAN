@@ -69,7 +69,7 @@ impl Sim {
         let n = &self.nodes[&node];
         n.probe.update(f);
         let v = n.probe.sample();
-        self.plane.heartbeat(node, v, self.now);
+        self.plane.heartbeat(node, v, self.now).expect("scripted vectors are valid");
         self.note(note);
     }
 
@@ -104,7 +104,7 @@ impl Sim {
         let live: Vec<(NodeId, CapabilityVector)> =
             self.nodes.iter().filter(|(_, n)| !n.gone).map(|(id, n)| (*id, n.probe.sample())).collect();
         for (id, v) in live {
-            self.plane.heartbeat(id, v, self.now);
+            self.plane.heartbeat(id, v, self.now).expect("scripted vectors are valid");
         }
         let mut out = self.plane.tick(self.now);
         out.extend(self.plane.schedule(self.now));

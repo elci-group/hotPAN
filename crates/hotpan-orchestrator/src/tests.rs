@@ -2,6 +2,7 @@
 //! real leases, real envelopes, real sandbox execution, synthetic clock.
 
 use super::*;
+use crate::plane::SubmitError;
 use hotpan_heuristic::Protection;
 use hotpan_node::{advertisement, NodeCore, NodeIdentity, NodeSettings};
 use hotpan_probe::{template, Probe, ScriptedProbe};
@@ -104,7 +105,7 @@ impl World {
         let live: Vec<(NodeId, CapabilityVector)> =
             self.nodes.iter().filter(|(_, s)| !s.gone).map(|(id, s)| (*id, s.probe.sample())).collect();
         for (id, v) in live {
-            self.plane.heartbeat(id, v, self.now);
+            self.plane.heartbeat(id, v, self.now).expect("scripted vectors are valid");
         }
         let mut out = self.plane.tick(self.now);
         out.extend(self.plane.schedule(self.now));
@@ -350,14 +351,14 @@ fn overdue_leases_expire_and_dissolve() {
     // The node accepted but never answers (yet keeps heartbeating).
     let cfg = PlaneConfig::default();
     w.now += 1_000 + cfg.lease_slack_ms;
-    w.plane.heartbeat(n, template(DeviceClass::Desktop), w.now);
+    w.plane.heartbeat(n, template(DeviceClass::Desktop), w.now).unwrap();
     let out = w.plane.tick(w.now);
     assert!(matches!(out[0].1, OrchMsg::Revoke { reason: RevokeReason::Expired, .. }));
     assert_eq!(w.plane.lease_phase(lease_id), Some(Phase::Revoked));
     assert!(matches!(w.plane.job_report(jid).unwrap().fragments[0].state, FragmentState::Pending));
     // No purge receipt arrives either: dissolve after the grace period.
     w.now += cfg.purge_grace_ms;
-    w.plane.heartbeat(n, template(DeviceClass::Desktop), w.now);
+    w.plane.heartbeat(n, template(DeviceClass::Desktop), w.now).unwrap();
     w.plane.tick(w.now);
     assert_eq!(w.plane.lease_phase(lease_id), None);
 }
@@ -409,4 +410,106 @@ fn node_rejects_tampered_and_foreign_leases() {
     assert!(matches!(msgs.as_slice(), [NodeMsg::Purged { .. }]), "{msgs:?}");
     assert!(!ws.exists());
     assert_eq!(sim.core.active(), 0);
+}
+
+// ------------------------------------------------------------ Phase 1 bounds
+
+fn bounded_world(cfg: PlaneConfig) -> World {
+    let mut w = World::new();
+    w.plane = ControlPlane::new(Keypair::generate(), cfg);
+    w
+}
+
+#[test]
+fn fleet_size_is_capped() {
+    let mut w = bounded_world(PlaneConfig { max_nodes: 2, ..Default::default() });
+    w.join("a", DeviceClass::Phone, |_| {});
+    w.join("b", DeviceClass::Phone, |_| {});
+    let id = NodeIdentity::fresh();
+    let dir = tempfile::tempdir().unwrap();
+    let probe = ScriptedProbe::new(DeviceClass::Phone, template(DeviceClass::Phone));
+    let advert = advertisement(&id, &settings("c", dir.path()), &probe);
+    assert_eq!(w.plane.register(advert, TrustLevel::Paired, w.now), Err("fabric is full".into()));
+}
+
+#[test]
+fn hostile_advertisements_are_refused() {
+    let mut w = World::new();
+    let id = NodeIdentity::fresh();
+    let dir = tempfile::tempdir().unwrap();
+    let probe = ScriptedProbe::new(DeviceClass::Phone, template(DeviceClass::Phone));
+    let mut advert = advertisement(&id, &settings("x", dir.path()), &probe);
+    advert.vector.thermal_headroom = f32::NAN;
+    let err = w.plane.register(advert.clone(), TrustLevel::Paired, w.now).unwrap_err();
+    assert!(err.contains("thermal_headroom"), "{err}");
+    advert.vector.thermal_headroom = 0.5;
+    advert.label = "\u{1b}[31mfake".into();
+    assert!(w.plane.register(advert, TrustLevel::Paired, w.now).is_err());
+    assert_eq!(w.plane.node_count(), 0);
+}
+
+#[test]
+fn lying_heartbeat_ejects_the_node_and_requeues_its_work() {
+    let mut w = World::new();
+    let n = w.join("liar", DeviceClass::Desktop, |_| {});
+    let jid = w.plane.submit(job(vec![frag("f", WorkloadProfile::ComputeBound, primes(10))]), w.now).unwrap();
+    let _held = w.plane.schedule(w.now); // leased to `liar`, not delivered
+    let mut v = template(DeviceClass::Desktop);
+    v.compute.busy = f32::INFINITY;
+    let out = w.plane.handle(n, NodeMsg::Heartbeat { vector: Box::new(v) }, w.now);
+    assert!(out.is_empty());
+    assert!(!w.plane.is_registered(n));
+    assert!(matches!(w.plane.job_report(jid).unwrap().fragments[0].state, FragmentState::Pending));
+    assert!(w
+        .plane
+        .drain_events()
+        .iter()
+        .any(|e| matches!(&e.kind, EventKind::BadMessage { detail, .. } if detail.contains("compute.busy"))));
+}
+
+#[test]
+fn per_client_and_global_job_quotas() {
+    let mut w = bounded_world(PlaneConfig { max_jobs_per_client: 2, max_active_jobs: 3, ..Default::default() });
+    let j = || job(vec![frag("f", WorkloadProfile::ComputeBound, primes(10))]);
+    w.plane.submit_as(j(), "alice", w.now).unwrap();
+    w.plane.submit_as(j(), "alice", w.now).unwrap();
+    assert!(matches!(w.plane.submit_as(j(), "alice", w.now), Err(SubmitError::Quota(_))));
+    w.plane.submit_as(j(), "bob", w.now).unwrap();
+    // Fabric-wide cap reached even though bob has room.
+    assert!(matches!(w.plane.submit_as(j(), "bob", w.now), Err(SubmitError::Quota(_))));
+    // Finishing work frees quota.
+    w.join("n", DeviceClass::Desktop, |v| v.compute.logical_cpus = 4);
+    for _ in 0..3 {
+        w.step();
+    }
+    w.plane.submit_as(j(), "alice", w.now).unwrap();
+}
+
+#[test]
+fn finished_jobs_are_retained_up_to_a_bound() {
+    let mut w = bounded_world(PlaneConfig { max_retained_jobs: 3, ..Default::default() });
+    w.join("n", DeviceClass::Desktop, |_| {});
+    let ids: Vec<JobId> = (0..6)
+        .map(|_| {
+            let id = w.plane.submit(job(vec![frag("f", WorkloadProfile::ComputeBound, primes(10))]), w.now).unwrap();
+            w.step();
+            id
+        })
+        .collect();
+    assert_eq!(w.plane.job_count(), 3);
+    assert!(w.plane.job_report(ids[0]).is_none(), "oldest finished job evicted");
+    assert!(w.plane.job_report(ids[5]).unwrap().finished);
+}
+
+#[test]
+fn oversized_jobs_are_rejected_up_front() {
+    let mut w = World::new();
+    let many: Vec<FragmentSpec> =
+        (0..1025).map(|i| frag(&format!("f{i}"), WorkloadProfile::ComputeBound, primes(10))).collect();
+    assert!(matches!(w.plane.submit(job(many), w.now), Err(SubmitError::Spec(SpecError::TooManyFragments(_)))));
+    let mut f = frag("f", WorkloadProfile::ComputeBound, primes(10));
+    f.ceiling.output_bytes = 64 << 20;
+    assert!(matches!(w.plane.submit(job(vec![f]), w.now), Err(SubmitError::Spec(SpecError::Invalid(_)))));
+    let f = frag("../../etc", WorkloadProfile::ComputeBound, primes(10));
+    assert!(w.plane.submit(job(vec![f]), w.now).is_err());
 }

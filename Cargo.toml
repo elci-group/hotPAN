@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["fuzz"]
 members = [
     "crates/hotpan-core",
     "crates/hotpan-heuristic",
@@ -49,3 +50,4 @@ hex = "0.4"
 zeroize = "1"
 libc = "0.2"
 tempfile = "3"
+proptest = "1"

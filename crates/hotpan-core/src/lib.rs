@@ -12,18 +12,30 @@
 pub mod capability;
 pub mod ids;
 pub mod lifecycle;
+pub mod validate;
 pub mod vector;
 pub mod workload;
+
+#[cfg(test)]
+mod props;
 
 pub use capability::Capability;
 pub use ids::{JobId, LeaseId, NodeId};
 pub use lifecycle::{Lifecycle, LifecycleError, Phase, RevokeReason};
+pub use validate::{Invalid, Limits};
 pub use vector::*;
 pub use workload::*;
 
 /// Milliseconds since the Unix epoch. All hotPAN logic takes `now` explicitly
 /// so the control plane can be driven deterministically in tests and sims.
 pub type Millis = u64;
+
+/// Lock a mutex, recovering the data if a previous holder panicked. The
+/// control plane's state stays usable (and every mutation in it is
+/// transition-checked) instead of one panic poisoning every later request.
+pub fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 pub fn now_millis() -> Millis {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)

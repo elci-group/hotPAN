@@ -9,6 +9,8 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
+const OUTBOUND_QUEUE: usize = 256;
+
 /// Background tasks die with the session, even if the session future itself
 /// is dropped mid-flight (a node that is gone must stop heartbeating).
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
@@ -45,6 +47,8 @@ pub enum AgentError {
     Handshake,
     #[error("orchestrator did not prove it terminates this channel")]
     ChannelBinding,
+    #[error("control plane silent for {0:?}; treating it as gone")]
+    Silent(Duration),
 }
 
 #[derive(Debug)]
@@ -98,6 +102,7 @@ pub async fn run_session(cfg: &AgentConfig, probe: Arc<dyn Probe>) -> Result<Ses
     wr.send(&hello).await?;
     match rd.recv::<OrchMsg>().await? {
         OrchMsg::Registered { node_id, trust } => {
+            rd.set_max_frame(MAX_FRAME);
             tracing::info!(node = %node_id.short(), ?trust, "promoted into fabric");
         }
         OrchMsg::Refused { reason } => return Err(AgentError::Refused(reason)),
@@ -106,7 +111,9 @@ pub async fn run_session(cfg: &AgentConfig, probe: Arc<dyn Probe>) -> Result<Ses
 
     let node_id = id.node_id;
     let core = Arc::new(Mutex::new(NodeCore::new(id, welcome.orchestrator.clone(), cfg.settings.clone())));
-    let (tx, mut rx) = mpsc::unbounded_channel::<NodeMsg>();
+    // Bounded: heartbeats are dropped when full (the next one supersedes
+    // them); results and receipts wait for room.
+    let (tx, mut rx) = mpsc::channel::<NodeMsg>(OUTBOUND_QUEUE);
     let writer = AbortOnDrop(tokio::spawn(async move {
         while let Some(m) = rx.recv().await {
             if wr.send(&m).await.is_err() {
@@ -123,34 +130,42 @@ pub async fn run_session(cfg: &AgentConfig, probe: Arc<dyn Probe>) -> Result<Ses
                 iv.tick().await;
                 let p = probe.clone();
                 let Ok(v) = tokio::task::spawn_blocking(move || p.sample()).await else { break };
-                if tx.send(NodeMsg::Heartbeat { vector: Box::new(v) }).is_err() {
+                if let Err(mpsc::error::TrySendError::Closed(_)) =
+                    tx.try_send(NodeMsg::Heartbeat { vector: Box::new(v) })
+                {
                     break;
                 }
             }
         }))
     };
 
+    // The control plane pings every heartbeat; several missed means it is
+    // gone (or the connection is half-open), and so is our authority.
+    let silence = Duration::from_millis(welcome.heartbeat_ms.max(100) * 4).max(Duration::from_secs(2));
     let mut workers = JoinSet::new();
     let end = loop {
         let msg = tokio::select! {
-            m = rd.recv::<OrchMsg>() => m,
+            m = tokio::time::timeout(silence, rd.recv::<OrchMsg>()) => match m {
+                Ok(m) => m,
+                Err(_) => break Err(AgentError::Silent(silence)),
+            },
             Some(_) = workers.join_next(), if !workers.is_empty() => continue,
         };
         match msg {
             Ok(OrchMsg::Provision { lease, task }) => {
                 let vector = probe.sample();
-                let prepared = core.lock().unwrap().provision(lease, task, &vector, now_millis());
+                let prepared = lock(&core).provision(lease, task, &vector, now_millis());
                 let prep = match prepared {
                     Ok(p) => p,
                     Err(rejection) => {
-                        let _ = tx.send(rejection.into());
+                        let _ = tx.send(rejection.into()).await;
                         continue;
                     }
                 };
                 let lease_id = prep.grant.lease_id;
-                let _ = tx.send(NodeMsg::Accepted { lease_id });
-                let _ = tx.send(NodeMsg::Executing { lease_id });
-                let guard = core.lock().unwrap().guard_for(&prep, probe.clone());
+                let _ = tx.send(NodeMsg::Accepted { lease_id }).await;
+                let _ = tx.send(NodeMsg::Executing { lease_id }).await;
+                let guard = lock(&core).guard_for(&prep, probe.clone());
                 let policy = cfg.settings.policy.clone();
                 let (core, tx) = (core.clone(), tx.clone());
                 workers.spawn(async move {
@@ -160,24 +175,30 @@ pub async fn run_session(cfg: &AgentConfig, probe: Arc<dyn Probe>) -> Result<Ses
                     })
                     .await;
                     if let Ok((prep, report)) = done {
-                        for m in core.lock().unwrap().complete(prep, report) {
-                            let _ = tx.send(m);
+                        let msgs = lock(&core).complete(prep, report);
+                        for m in msgs {
+                            let _ = tx.send(m).await;
                         }
                     }
                 });
             }
             Ok(OrchMsg::Revoke { lease_id, reason }) => {
                 tracing::info!(lease = %lease_id.short(), ?reason, "lease revoked");
-                if let Some(m) = core.lock().unwrap().revoke(lease_id) {
-                    let _ = tx.send(m);
+                let m = lock(&core).revoke(lease_id);
+                if let Some(m) = m {
+                    let _ = tx.send(m).await;
                 }
             }
             Ok(OrchMsg::Purge { lease_id }) => {
-                if let Some(m) = core.lock().unwrap().purge(lease_id) {
-                    let _ = tx.send(m);
+                let m = lock(&core).purge(lease_id);
+                if let Some(m) = m {
+                    let _ = tx.send(m).await;
                 }
             }
             Ok(OrchMsg::Refused { reason }) => break Err(AgentError::Refused(reason)),
+            Ok(OrchMsg::Ping { nonce }) => {
+                let _ = tx.try_send(NodeMsg::Pong { nonce });
+            }
             Ok(OrchMsg::Registered { .. }) => {}
             Err(WireError::Closed) => break Ok(()),
             Err(e) => break Err(e.into()),
@@ -185,11 +206,11 @@ pub async fn run_session(cfg: &AgentConfig, probe: Arc<dyn Probe>) -> Result<Ses
     };
 
     // Dissolve: no control plane, no authority.
-    core.lock().unwrap().abandon_all();
+    lock(&core).abandon_all();
     drop(hb);
     drop(writer);
     let drain = async { while workers.join_next().await.is_some() {} };
     let _ = tokio::time::timeout(Duration::from_secs(10), drain).await;
-    let completed = core.lock().unwrap().completed();
+    let completed = lock(&core).completed();
     end.map(|_| SessionEnd { node_id, orchestrator: welcome.orchestrator.signing, leases_completed: completed })
 }

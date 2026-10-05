@@ -14,6 +14,25 @@ All notable changes to hotPAN. Versions are assigned by kaptaind.
   - CI with SARIF upload.
   - SECURITY, CONTRIBUTING and CHANGELOG files, and a phase log with evidence capture.
 
+### Changed (Phase 1, protocol and control-plane hardening)
+- Protocol v3 (prologue `hotpan/3`). It adds an orchestrator→node `Ping`/`Pong`
+  keepalive, and nodes dissolve when the control plane is silent.
+- Bounds on everything a peer controls:
+  - connections, concurrent handshakes and handshake deadline
+  - per-role frame caps
+  - bounded per-node queues with slow-peer eviction
+  - node and client idle timeouts
+  - fleet size, plus fabric-wide and per-client job quotas
+  - retention of finished jobs
+- Strict validation of advertisements, heartbeats and job specs (`hotpan_core::Limits`).
+  A node that sends an invalid heartbeat is ejected.
+- Default `output_bytes` ceiling lowered to 256 KiB, with a hard limit of 512 KiB, so
+  every result fits in one frame.
+- `hotpan submit --identity` sets a persistent client key, and quotas are applied per key.
+- Network-facing crates deny `unwrap`/`expect`/`panic` outside tests. Mutex locks
+  recover from poisoning.
+- Property tests (lifecycle, planner, codec, secure channel) and cargo-fuzz targets.
+
 ## [0.2.1] - 2026-10-05
 ### Added
 - Noise_XX encrypted, authenticated transport. The channel binding is signed by the pinned orchestrator key.

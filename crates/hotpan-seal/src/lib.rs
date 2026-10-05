@@ -10,6 +10,9 @@
 //! * [`Attestation`] — the node's signature over the digest of what it returned.
 
 #![forbid(unsafe_code)]
+// No panics reachable from peer input (DIRECTIVE P1.6): fallible paths
+// return errors; the few infallible serializations carry a local allow.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod attest;
 mod envelope;

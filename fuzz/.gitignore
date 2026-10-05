@@ -1,0 +1,5 @@
+target
+corpus/*/*
+!corpus/job_spec/photo-pipeline.toml
+artifacts
+coverage

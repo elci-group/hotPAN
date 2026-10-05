@@ -90,7 +90,7 @@ Every connection is dialled by the node or client; the control plane never
 dials out.
 
 1. **Noise_XX handshake** (`Noise_XX_25519_ChaChaPoly_BLAKE2s`, prologue
-   `hotpan/2`). Each side's Noise static key is its x25519 key: the
+   `hotpan/3`, which matches `PROTOCOL_VERSION`). Each side's Noise static key is its x25519 key: the
    orchestrator's long-lived key, a node's session key, or a client's
    throwaway key. The handshake hash is the **channel binding**.
 2. The server sends `Welcome {orchestrator keys, proof, heartbeat}`. `proof` is
@@ -111,9 +111,40 @@ relays is bound to the wrong channel.
 After the handshake, each message is JSON with its length prefixed **inside**
 the first encrypted chunk. A message larger than one Noise message (64 KiB) is
 split into chunks. Nonces increase strictly in each direction, so tampering,
-replay, reordering and truncation all show up as errors. Messages are capped at
-8 MiB.
+replay, reordering and truncation all show up as errors. Frame size is capped
+by role (see below), and never above 8 MiB.
 
 Nodes are `Unverified` unless they prove the pairing secret, in which case they
 are `Paired`. `HardwareAttested` exists in the model, but nothing grants it yet
 (see ROADMAP).
+
+## Bounds and overload
+
+Every resource a peer can make the control plane hold is bounded. When a limit
+is reached, the control plane refuses the new work and keeps the existing
+work. It does not degrade.
+
+| Resource | Bound | Where | On overload |
+|---|---|---|---|
+| Live connections | `max_connections` (1024) | `ServerLimits` | New connection closed immediately, `connections_refused` incremented |
+| Concurrent handshakes | `max_handshakes` (64) | `ServerLimits` | Connection closed |
+| Handshake + Welcome/Hello | `handshake_timeout` (10 s) | `ServerLimits` | Connection closed, `handshakes_failed` incremented |
+| Frame size | 256 KiB before auth, 4 MiB for clients, 8 MiB for registered nodes | `SecureReader::set_max_frame` | `TooLarge`, connection closed. Buffers grow only as authenticated chunks arrive. |
+| Outbound queue per node | `outbound_queue` (256) | `ServerLimits` | Slow peer evicted (`peers_evicted`), and its leases revoked and re-queued |
+| Node idle | `node_timeout_ms` | `PlaneConfig` | Connection closed, node lost |
+| Client idle | `client_idle_timeout` (120 s) | `ServerLimits` | Connection closed |
+| Control-plane silence (seen by the node) | 4 × heartbeat, at least 2 s | node agent | Node cancels and purges everything (`AgentError::Silent`) |
+| Fleet size | `max_nodes` (512) | `PlaneConfig` | Registration refused ("fabric is full") |
+| Unfinished jobs | `max_active_jobs` (4096) fabric-wide, `max_jobs_per_client` (64) per client signing key | `PlaneConfig` | `SubmitError::Quota` |
+| Finished jobs retained | `max_retained_jobs` (10 000) | `PlaneConfig` | Oldest finished jobs evicted |
+| Message contents | `Limits` (labels, tokens, capability counts, ceilings, inline data, fragments ≤ 1024, finite floats) | `hotpan-core::validate` | Advert: registration refused. Heartbeat: node ejected. Job: rejected. |
+| Lease output | `max_output_bytes` (512 KiB) | `Limits` | Job rejected. This guarantees that the worst-case escaped and sealed result still fits in one frame. |
+
+The orchestrator pings every node each heartbeat interval, and nodes answer
+with `Pong`. A half-open TCP connection therefore cannot keep a node working
+for a control plane that no longer exists.
+
+Network-facing crates (`hotpan-wire`, `hotpan-orchestrator`, `hotpan-node`,
+`hotpan-seal`) deny `unwrap`, `expect` and `panic!` outside tests. The few
+infallible serializations carry a local, commented `allow`. Mutex locks
+recover from poisoning (`hotpan_core::lock`) rather than cascading a panic.

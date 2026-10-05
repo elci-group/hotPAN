@@ -15,6 +15,16 @@ pub struct PlaneConfig {
     /// After expiry, how long to wait for a purge receipt before dissolving.
     pub purge_grace_ms: u64,
     pub protection: Protection,
+    /// Input bounds applied to every advertisement, heartbeat and job.
+    pub limits: Limits,
+    /// Fleet size cap: registration beyond it is refused.
+    pub max_nodes: usize,
+    /// Unfinished jobs across all clients.
+    pub max_active_jobs: usize,
+    /// Unfinished jobs per client identity (its signing key).
+    pub max_jobs_per_client: usize,
+    /// Finished jobs kept for status queries; the oldest are evicted first.
+    pub max_retained_jobs: usize,
 }
 
 impl Default for PlaneConfig {
@@ -25,8 +35,21 @@ impl Default for PlaneConfig {
             lease_slack_ms: 10_000,
             purge_grace_ms: 10_000,
             protection: Protection::default(),
+            limits: Limits::default(),
+            max_nodes: 512,
+            max_active_jobs: 4096,
+            max_jobs_per_client: 64,
+            max_retained_jobs: 10_000,
         }
     }
+}
+
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum SubmitError {
+    #[error(transparent)]
+    Spec(#[from] SpecError),
+    #[error("quota exceeded: {0}")]
+    Quota(String),
 }
 
 /// A message the plane wants delivered to a node.
@@ -109,6 +132,7 @@ struct FragState {
 
 struct Job {
     spec: JobSpec,
+    owner: String,
     fragments: Vec<FragState>,
     finished: bool,
 }
@@ -173,9 +197,10 @@ impl ControlPlane {
         if self.nodes.contains_key(&id) {
             return Err("node id already registered".into());
         }
-        if advert.max_leases == 0 {
-            return Err("node offers zero lease slots".into());
+        if self.nodes.len() >= self.cfg.max_nodes {
+            return Err("fabric is full".into());
         }
+        advert.validate(&self.cfg.limits).map_err(|e| e.to_string())?;
         self.emit(
             now,
             EventKind::NodeJoined { node: id, label: advert.label.clone(), class: advert.device_class, trust },
@@ -184,11 +209,19 @@ impl ControlPlane {
         Ok(id)
     }
 
-    pub fn heartbeat(&mut self, node: NodeId, vector: CapabilityVector, now: Millis) {
+    /// Accept a fresh capability vector. An invalid one is rejected and
+    /// leaves the previous vector in place.
+    pub fn heartbeat(&mut self, node: NodeId, vector: CapabilityVector, now: Millis) -> Result<(), Invalid> {
+        vector.validate(&self.cfg.limits)?;
         if let Some(n) = self.nodes.get_mut(&node) {
             n.advert.vector = vector;
             n.last_seen = now;
         }
+        Ok(())
+    }
+
+    pub fn is_registered(&self, node: NodeId) -> bool {
+        self.nodes.contains_key(&node)
     }
 
     /// The node is gone (disconnect, timeout, or withdrawal). Everything it
@@ -220,8 +253,22 @@ impl ControlPlane {
 
     // ----------------------------------------------------------------- jobs
 
-    pub fn submit(&mut self, spec: JobSpec, now: Millis) -> Result<JobId, SpecError> {
-        spec.validate()?;
+    /// Submit as the local operator (simulations, tests).
+    pub fn submit(&mut self, spec: JobSpec, now: Millis) -> Result<JobId, SubmitError> {
+        self.submit_as(spec, "local", now)
+    }
+
+    /// Submit on behalf of `owner` (a client's signing key), within quotas.
+    pub fn submit_as(&mut self, spec: JobSpec, owner: &str, now: Millis) -> Result<JobId, SubmitError> {
+        spec.validate_with(&self.cfg.limits)?;
+        let active: Vec<&Job> = self.jobs.values().filter(|j| !j.finished).collect();
+        if active.len() >= self.cfg.max_active_jobs {
+            return Err(SubmitError::Quota(format!("{} unfinished jobs fabric-wide", active.len())));
+        }
+        let mine = active.iter().filter(|j| j.owner == owner).count();
+        if mine >= self.cfg.max_jobs_per_client {
+            return Err(SubmitError::Quota(format!("{mine} unfinished jobs for this client")));
+        }
         let id = JobId::random();
         self.emit(now, EventKind::JobSubmitted { job: id, name: spec.name.clone(), fragments: spec.fragments.len() });
         let fragments = spec
@@ -234,7 +281,7 @@ impl ControlPlane {
                 blocked_by: vec![],
             })
             .collect();
-        self.jobs.insert(id, Job { spec, fragments, finished: false });
+        self.jobs.insert(id, Job { spec, owner: owner.to_string(), fragments, finished: false });
         self.job_order.push(id);
         Ok(id)
     }
@@ -257,7 +304,7 @@ impl ControlPlane {
         let mut keys: Vec<(JobId, usize)> = Vec::new();
         let mut items: Vec<PlanItem<'_>> = Vec::new();
         for jid in &self.job_order {
-            let job = &self.jobs[jid];
+            let Some(job) = self.jobs.get(jid) else { continue };
             for (i, f) in job.fragments.iter().enumerate() {
                 if f.state == FragmentState::Pending {
                     keys.push((*jid, i));
@@ -280,14 +327,16 @@ impl ControlPlane {
         }
         for u in &placement.unplaced {
             let (jid, fi) = keys[u.item];
-            self.jobs.get_mut(&jid).unwrap().fragments[fi].blocked_by = u.blocking.iter().cloned().collect();
+            if let Some(f) = self.jobs.get_mut(&jid).and_then(|j| j.fragments.get_mut(fi)) {
+                f.blocked_by = u.blocking.iter().cloned().collect();
+            }
         }
         out
     }
 
     /// observe → score → promote → provision for one assignment.
     fn promote(&mut self, jid: JobId, fi: usize, node: NodeId, score: f32, now: Millis) -> Option<Outbound> {
-        let spec = self.jobs[&jid].spec.fragments[fi].clone();
+        let spec = self.jobs.get(&jid)?.spec.fragments.get(fi)?.clone();
         let n = self.nodes.get(&node)?;
         let lease_id = LeaseId::random();
         let grant = LeaseGrant {
@@ -302,6 +351,7 @@ impl ControlPlane {
             expires_at: now + spec.ceiling.wall_ms + self.cfg.lease_slack_ms,
             issuer: String::new(),
         };
+        #[allow(clippy::expect_used)] // plain enum of strings and integers: cannot fail
         let task_bytes = serde_json::to_vec(&spec.task).expect("task serializes");
         let envelope = match seal(&n.advert.kex_key, lease_id.0.as_bytes(), &task_bytes) {
             Ok(e) => e,
@@ -315,15 +365,17 @@ impl ControlPlane {
         let mut lifecycle = Lifecycle::new(now);
         let mut rec_phases = vec![Phase::Observed];
         for p in [Phase::Scored, Phase::Promoted, Phase::Provisioned] {
-            lifecycle.advance(p, now).expect("fresh lease advances");
+            lifecycle.advance(p, now).ok()?;
             rec_phases.push(p);
         }
-        self.leases.insert(lease_id, LeaseRecord { signed: signed.clone(), job: jid, frag: fi, node, lifecycle });
-        self.nodes.get_mut(&node).unwrap().active.insert(lease_id);
-        let f = &mut self.jobs.get_mut(&jid).unwrap().fragments[fi];
+        let f = self.jobs.get_mut(&jid)?.fragments.get_mut(fi)?;
         f.attempts += 1;
         f.blocked_by.clear();
         f.state = FragmentState::Leased { lease_id, node_id: node };
+        self.leases.insert(lease_id, LeaseRecord { signed: signed.clone(), job: jid, frag: fi, node, lifecycle });
+        if let Some(n) = self.nodes.get_mut(&node) {
+            n.active.insert(lease_id);
+        }
         for p in rec_phases {
             self.emit(
                 now,
@@ -420,7 +472,26 @@ impl ControlPlane {
             let ok = job.fragments.iter().all(|f| matches!(f.state, FragmentState::Done { .. }));
             let name = job.spec.name.clone();
             self.emit(now, EventKind::JobFinished { job: jid, name, ok });
+            self.evict_retained();
         }
+    }
+
+    /// Keep at most `max_retained_jobs` finished jobs (oldest go first), so
+    /// the job table cannot grow without bound.
+    fn evict_retained(&mut self) {
+        let finished: Vec<JobId> =
+            self.job_order.iter().copied().filter(|j| self.jobs.get(j).is_some_and(|j| j.finished)).collect();
+        let excess = finished.len().saturating_sub(self.cfg.max_retained_jobs);
+        if excess == 0 {
+            return;
+        }
+        let evict: BTreeSet<JobId> = finished.into_iter().take(excess).collect();
+        self.job_order.retain(|j| !evict.contains(j));
+        self.jobs.retain(|j, _| !evict.contains(j));
+    }
+
+    pub fn job_count(&self) -> usize {
+        self.jobs.len()
     }
 
     /// Validate that `node` really holds `lease`.
@@ -436,9 +507,14 @@ impl ControlPlane {
         }
         match msg {
             NodeMsg::Heartbeat { vector } => {
-                self.heartbeat(node, *vector, now);
+                if let Err(e) = self.heartbeat(node, *vector, now) {
+                    // A node that lies about its own state is ejected.
+                    self.emit(now, EventKind::BadMessage { node, detail: e.to_string() });
+                    self.node_gone(node, false, now);
+                }
                 vec![]
             }
+            NodeMsg::Pong { .. } => vec![],
             NodeMsg::Accepted { .. } => vec![],
             NodeMsg::Executing { lease_id } => {
                 if self.owned(node, lease_id) {
@@ -486,7 +562,7 @@ impl ControlPlane {
             return vec![];
         }
         let fragment = r.signed.grant.fragment_id.clone();
-        let node_key = self.nodes[&node].advert.signing_key.clone();
+        let Some(node_key) = self.nodes.get(&node).map(|n| n.advert.signing_key.clone()) else { return vec![] };
         let verified = open(&self.keys, &envelope, lease.0.as_bytes()).map_err(|e| e.to_string()).and_then(|plain| {
             attestation.verify(&node_key, lease, &fragment, node, &plain).map_err(|e| e.to_string())?;
             let payload: ResultPayload = serde_json::from_slice(&plain).map_err(|e| e.to_string())?;
@@ -496,7 +572,7 @@ impl ControlPlane {
             Ok(payload)
         });
 
-        if self.leases[&lease].lifecycle.phase == Phase::Provisioned {
+        if self.lease_phase(lease) == Some(Phase::Provisioned) {
             self.advance(lease, Phase::Executing, now);
         }
         let purge = vec![Outbound(node, OrchMsg::Purge { lease_id: lease })];
@@ -524,11 +600,12 @@ impl ControlPlane {
         match failure {
             Some(reason) => self.abort_lease(lease, reason, now),
             None => {
-                let (jid, fi) = (self.leases[&lease].job, self.leases[&lease].frag);
-                let job = self.jobs.get_mut(&jid).unwrap();
-                job.fragments[fi].state = FragmentState::Done { node_id: node, result: payload };
-                self.emit(now, EventKind::FragmentDone { job: jid, fragment, node });
-                self.check_finished(jid, now);
+                let Some((jid, fi)) = self.leases.get(&lease).map(|r| (r.job, r.frag)) else { return purge };
+                if let Some(f) = self.jobs.get_mut(&jid).and_then(|j| j.fragments.get_mut(fi)) {
+                    f.state = FragmentState::Done { node_id: node, result: payload };
+                    self.emit(now, EventKind::FragmentDone { job: jid, fragment, node });
+                    self.check_finished(jid, now);
+                }
             }
         }
         purge

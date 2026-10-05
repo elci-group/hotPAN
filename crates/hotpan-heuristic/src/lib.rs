@@ -9,6 +9,8 @@
 #![forbid(unsafe_code)]
 
 mod assign;
+#[cfg(test)]
+mod props;
 mod score;
 
 pub use assign::{plan, Assignment, Plan, PlanItem, Unplaced};

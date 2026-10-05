@@ -40,7 +40,9 @@ require_toml_keys = ["licenses.allow", "advisories", "bans.wildcards", "sources.
 
 [[command]]
 name = "cargo-deny: advisories, bans, licenses, sources"
-cmd = ["cargo", "deny", "--offline", "check"]
+# cargo-deny resolves metadata for every target platform, so make sure all
+# locked crates are present (a no-op once cached), then check offline.
+cmd = ["sh", "-c", "cargo fetch --locked -q && cargo deny --offline check"]
 expect_exit = 0
 timeout_secs = 300
 

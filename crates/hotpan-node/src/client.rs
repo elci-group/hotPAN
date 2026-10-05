@@ -30,10 +30,21 @@ pub struct Client {
 }
 
 impl Client {
+    /// Connect with a throwaway identity (quotas apply to it alone).
     pub async fn connect(addr: &str, pairing_secret: Option<&str>, pin: Option<&str>) -> Result<Self, ClientError> {
+        Self::connect_as(addr, &Keypair::generate(), pairing_secret, pin).await
+    }
+
+    /// Connect as a persistent client identity: the control plane keys
+    /// per-client quotas to `keys`' signing key.
+    pub async fn connect_as(
+        addr: &str,
+        keys: &Keypair,
+        pairing_secret: Option<&str>,
+        pin: Option<&str>,
+    ) -> Result<Self, ClientError> {
         let s = TcpStream::connect(addr).await?;
         let (rd, wr) = s.into_split();
-        let keys = Keypair::generate();
         let (mut rd, mut wr, session) = initiate(rd, wr, &keys.kex_secret_bytes()).await?;
         let binding = session.binding();
         let welcome: Welcome = rd.recv().await?;
@@ -50,11 +61,13 @@ impl Client {
         let signing_key = keys.public().signing;
         let hello = Hello::Client {
             protocol: PROTOCOL_VERSION,
-            proof: hello_proof(&keys, &binding),
+            proof: hello_proof(keys, &binding),
             pairing: pairing_secret.map(|s| pairing_proof(s, &binding, &signing_key)),
             signing_key,
         };
         wr.send(&hello).await?;
+        // Job reports carry results, and they come from the pinned orchestrator.
+        rd.set_max_frame(MAX_FRAME);
         Ok(Self { rd, wr })
     }
 

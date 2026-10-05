@@ -82,6 +82,9 @@ enum Cmd {
         to: String,
         #[arg(long)]
         pin: Option<String>,
+        /// Persistent client key (from `hotpan keygen`); quotas are per identity.
+        #[arg(long)]
+        identity: Option<PathBuf>,
         /// Seconds to wait for completion (0 = return immediately).
         #[arg(long, default_value_t = 60)]
         wait: u64,
@@ -149,7 +152,7 @@ async fn main() -> Result<()> {
             let cfg = PlaneConfig { heartbeat_ms, node_timeout_ms: heartbeat_ms * 4, ..Default::default() };
             let server = Server::new(
                 ControlPlane::new(keys, cfg),
-                ServerConfig { pairing_secret, require_pairing, event_log: events },
+                ServerConfig { pairing_secret, require_pairing, event_log: events, limits: Default::default() },
             )?;
             let listener = tokio::net::TcpListener::bind(&listen).await?;
             tracing::info!(listen = %listener.local_addr()?, pin = %signing, "control plane up");
@@ -223,9 +226,13 @@ async fn main() -> Result<()> {
                 )?
             );
         }
-        Cmd::Submit { job, to, pin, wait, json } => {
+        Cmd::Submit { job, to, pin, identity, wait, json } => {
             let spec = config::load_job(&job)?;
-            let mut c = Client::connect(&to, secret().as_deref(), pin.as_deref()).await?;
+            let keys = match identity {
+                Some(p) => Keypair::load(&p).with_context(|| format!("loading identity {}", p.display()))?,
+                None => Keypair::generate(),
+            };
+            let mut c = Client::connect_as(&to, &keys, secret().as_deref(), pin.as_deref()).await?;
             let id = c.submit(spec).await?;
             if wait == 0 {
                 println!("{id}");

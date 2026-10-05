@@ -22,8 +22,12 @@ struct Fabric {
 }
 
 async fn fabric(cfg: ServerConfig) -> Fabric {
+    fabric_with(cfg, PlaneConfig::default()).await
+}
+
+async fn fabric_with(cfg: ServerConfig, base: PlaneConfig) -> Fabric {
     let events = tempfile::tempdir().unwrap();
-    let plane_cfg = PlaneConfig { heartbeat_ms: 200, node_timeout_ms: 1_000, ..Default::default() };
+    let plane_cfg = PlaneConfig { heartbeat_ms: 200, node_timeout_ms: 1_000, ..base };
     let plane = ControlPlane::new(Keypair::generate(), plane_cfg);
     let key = plane.public().signing;
     let cfg = ServerConfig { event_log: Some(events.path().join("events.jsonl")), ..cfg };
@@ -416,4 +420,95 @@ fn agent_settings(workroot: &std::path::Path) -> NodeSettings {
         max_leases: 1,
         protection: Protection::default(),
     }
+}
+
+// ------------------------------------------------------------ Phase 1 bounds
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connection_flood_and_slowloris_are_bounded() {
+    use hotpan_orchestrator::server::ServerLimits;
+    let limits = ServerLimits {
+        max_connections: 16,
+        max_handshakes: 4,
+        handshake_timeout: Duration::from_millis(300),
+        ..Default::default()
+    };
+    let f = fabric(ServerConfig { limits, ..Default::default() }).await;
+    // 40 idle sockets that never speak: a slowloris flood.
+    let mut idle = Vec::new();
+    for _ in 0..40 {
+        idle.push(tokio::net::TcpStream::connect(&f.addr).await.unwrap());
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let s = f.server.stats();
+    assert!(s.connections_live <= 16, "{s:?}");
+    assert!(s.connections_refused >= 24, "{s:?}");
+    // Handshake deadlines free the slots; a real node then joins.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(f.server.stats().connections_live, 0, "{:?}", f.server.stats());
+    assert!(f.server.stats().handshakes_failed >= 4);
+    let w = tempfile::tempdir().unwrap();
+    let (_n, _) = spawn_node(agent(&f, "real", w.path(), None), DeviceClass::Desktop, |_| {});
+    wait_nodes(&f, 1).await;
+    drop(idle);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn node_dissolves_when_control_plane_goes_silent() {
+    // A control plane that completes the handshake, registers the node, then
+    // never speaks again (a half-open connection looks exactly like this).
+    let orch = Keypair::generate();
+    let pin = orch.public().signing;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    tokio::spawn(async move {
+        let (s, _) = listener.accept().await.unwrap();
+        let (rd, wr) = s.into_split();
+        let (mut rd, mut wr, session) = hotpan_wire::respond(rd, wr, &orch.kex_secret_bytes()).await.unwrap();
+        wr.send(&hotpan_wire::Welcome {
+            protocol: hotpan_wire::PROTOCOL_VERSION,
+            orchestrator: orch.public(),
+            proof: hotpan_seal::welcome_proof(&orch, &session.binding()),
+            heartbeat_ms: 100,
+        })
+        .await
+        .unwrap();
+        let hello: hotpan_wire::Hello = rd.recv().await.unwrap();
+        let hotpan_wire::Hello::Node { advertisement, .. } = hello else { panic!() };
+        wr.send(&hotpan_wire::OrchMsg::Registered { node_id: advertisement.node_id, trust: TrustLevel::Unverified })
+            .await
+            .unwrap();
+        // Swallow heartbeats forever, never reply.
+        while rd.recv::<hotpan_wire::NodeMsg>().await.is_ok() {}
+    });
+    let w = tempfile::tempdir().unwrap();
+    let cfg = AgentConfig { addr, settings: agent_settings(w.path()), pin: Some(pin), pairing_secret: None };
+    let probe: Arc<dyn Probe> = Arc::new(ScriptedProbe::new(DeviceClass::Phone, template(DeviceClass::Phone)));
+    let t0 = std::time::Instant::now();
+    let r = tokio::time::timeout(Duration::from_secs(10), run_session(&cfg, probe)).await.unwrap();
+    assert!(matches!(r, Err(AgentError::Silent(_))), "{r:?}");
+    assert!(t0.elapsed() < Duration::from_secs(5));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quotas_follow_client_identity_over_the_wire() {
+    let f = fabric_with(ServerConfig::default(), PlaneConfig { max_jobs_per_client: 1, ..Default::default() }).await;
+    let me = Keypair::generate();
+    let job = || JobSpec {
+        name: "q".into(),
+        max_attempts: 1,
+        fragments: vec![frag(
+            "f",
+            WorkloadProfile::ComputeBound,
+            TaskSpec::Builtin(BuiltinTask::Echo { payload: "x".into() }),
+        )],
+    };
+    let mut c = Client::connect_as(&f.addr, &me, None, Some(&f.key)).await.unwrap();
+    c.submit(job()).await.unwrap();
+    // Same identity on a new connection: still over quota (no fleet to finish it).
+    let mut c2 = Client::connect_as(&f.addr, &me, None, Some(&f.key)).await.unwrap();
+    assert!(matches!(c2.submit(job()).await, Err(ClientError::Remote(m)) if m.contains("quota")));
+    // A different identity has its own quota.
+    let mut other = Client::connect(&f.addr, None, Some(&f.key)).await.unwrap();
+    other.submit(job()).await.unwrap();
 }

@@ -64,6 +64,7 @@ const LEASE: &[u8] = b"hotpan/lease/v1\0";
 
 impl LeaseGrant {
     fn bytes(&self) -> Vec<u8> {
+        #[allow(clippy::expect_used)] // plain struct of strings and integers: cannot fail
         serde_json::to_vec(self).expect("lease grant serializes")
     }
 

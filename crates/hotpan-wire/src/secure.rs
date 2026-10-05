@@ -26,7 +26,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 pub const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 /// Mixed into the handshake: peers speaking another protocol revision fail
 /// the handshake instead of misparsing each other.
-const PROLOGUE: &[u8] = b"hotpan/2";
+const PROLOGUE: &[u8] = b"hotpan/3";
 const MAX_NOISE: usize = 65_535;
 const TAG: usize = 16;
 const CHUNK: usize = MAX_NOISE - TAG;
@@ -55,7 +55,14 @@ pub struct SecureReader<R> {
     inner: R,
     state: Arc<StatelessTransportState>,
     nonce: u64,
+    /// Largest frame this reader will assemble; see [`SecureReader::set_max_frame`].
+    max_frame: usize,
 }
+
+/// Frame cap before the peer has authenticated (`Hello` and `Welcome`).
+pub const HANDSHAKE_FRAME: usize = 256 << 10;
+/// Frame cap for client requests.
+pub const CLIENT_FRAME: usize = 4 << 20;
 
 pub struct SecureWriter<W> {
     inner: W,
@@ -87,11 +94,9 @@ async fn recv_raw<R: AsyncRead + Unpin>(r: &mut R) -> Result<Vec<u8>, WireError>
 }
 
 fn builder(local_static: &[u8; 32]) -> Result<Builder<'_>, WireError> {
-    Builder::new(NOISE_PARAMS.parse().expect("valid noise params"))
-        .prologue(PROLOGUE)
-        .map_err(noise)?
-        .local_private_key(local_static)
-        .map_err(noise)
+    #[allow(clippy::expect_used)] // constant, covered by every handshake test
+    let params = NOISE_PARAMS.parse().expect("valid noise params");
+    Builder::new(params).prologue(PROLOGUE).map_err(noise)?.local_private_key(local_static).map_err(noise)
 }
 
 fn finish<R, W>(hs: HandshakeState, r: R, w: W) -> Result<(SecureReader<R>, SecureWriter<W>, Session), WireError> {
@@ -101,7 +106,11 @@ fn finish<R, W>(hs: HandshakeState, r: R, w: W) -> Result<(SecureReader<R>, Secu
         .ok_or_else(|| WireError::Noise("peer sent no static key".into()))?;
     let session = Session { remote_static: remote, handshake_hash: hs.get_handshake_hash().to_vec() };
     let state = Arc::new(hs.into_stateless_transport_mode().map_err(noise)?);
-    Ok((SecureReader { inner: r, state: state.clone(), nonce: 0 }, SecureWriter { inner: w, state, nonce: 0 }, session))
+    Ok((
+        SecureReader { inner: r, state: state.clone(), nonce: 0, max_frame: HANDSHAKE_FRAME },
+        SecureWriter { inner: w, state, nonce: 0 },
+        session,
+    ))
 }
 
 /// Dialler side: `-> e`, `<- e, ee, s, es`, `-> s, se`.
@@ -148,6 +157,29 @@ where
     finish(hs, r, w)
 }
 
+#[cfg(test)]
+impl<W> SecureWriter<W> {
+    /// A writer with this channel's keys and nonce position whose bytes land
+    /// in a `Vec` instead (tests inspect and corrupt the ciphertext).
+    pub(crate) fn tap(&self) -> SecureWriter<Vec<u8>> {
+        SecureWriter { inner: Vec::new(), state: self.state.clone(), nonce: self.nonce }
+    }
+}
+
+#[cfg(test)]
+impl SecureWriter<Vec<u8>> {
+    pub(crate) fn into_inner(self) -> Vec<u8> {
+        self.inner
+    }
+}
+
+#[cfg(test)]
+impl<R> SecureReader<R> {
+    pub(crate) fn reader_over<'a>(&self, bytes: &'a [u8]) -> SecureReader<&'a [u8]> {
+        SecureReader { inner: bytes, state: self.state.clone(), nonce: self.nonce, max_frame: self.max_frame }
+    }
+}
+
 impl<W: AsyncWrite + Unpin> SecureWriter<W> {
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), WireError> {
         let body = serde_json::to_vec(msg)?;
@@ -169,6 +201,14 @@ impl<W: AsyncWrite + Unpin> SecureWriter<W> {
 }
 
 impl<R: AsyncRead + Unpin> SecureReader<R> {
+    /// Set the frame cap once the peer's role is known. While a frame
+    /// arrives, a peer can make this reader hold at most this many bytes, so
+    /// memory per connection stays bounded by role. It is never above
+    /// [`MAX_FRAME`].
+    pub fn set_max_frame(&mut self, bytes: usize) {
+        self.max_frame = bytes.min(MAX_FRAME);
+    }
+
     async fn next_chunk(&mut self) -> Result<Vec<u8>, WireError> {
         let ct = recv_raw(&mut self.inner).await?;
         let mut plain = vec![0u8; ct.len()];
@@ -180,16 +220,19 @@ impl<R: AsyncRead + Unpin> SecureReader<R> {
 
     pub async fn recv<T: DeserializeOwned>(&mut self) -> Result<T, WireError> {
         let first = self.next_chunk().await?;
-        if first.len() < 4 {
-            return Err(WireError::Noise("short first chunk".into()));
-        }
-        let len = u32::from_be_bytes(first[..4].try_into().unwrap()) as usize;
-        if len > MAX_FRAME {
+        let [a, b, c, d, ..] = first[..] else { return Err(WireError::Noise("short first chunk".into())) };
+        let len = u32::from_be_bytes([a, b, c, d]) as usize;
+        if len > self.max_frame {
             return Err(WireError::TooLarge(len));
         }
+        // The buffer grows only as authenticated chunks arrive. It is never
+        // preallocated from the length, which the peer chooses.
         let mut body = first[4..].to_vec();
         while body.len() < len {
             body.extend(self.next_chunk().await?);
+            if body.len() > len {
+                return Err(WireError::Noise("frame longer than declared".into()));
+            }
         }
         if body.len() != len {
             return Err(WireError::Noise("frame length mismatch".into()));
@@ -236,6 +279,7 @@ mod tests {
         aw.send(&"hello").await.unwrap();
         assert_eq!(br.recv::<String>().await.unwrap(), "hello");
         // Exactly at, just over, and well over one chunk.
+        ar.set_max_frame(MAX_FRAME);
         for size in [CHUNK - 6, CHUNK - 5, CHUNK * 3 + 7, 1 << 20] {
             let big = "x".repeat(size);
             // Concurrently: a frame larger than the pipe buffer would
@@ -262,16 +306,35 @@ mod tests {
         assert!(!wire.windows(10).any(|w| w == b"top-secret"));
 
         // Unmodified bytes decrypt.
-        let mut ok = SecureReader { inner: &wire[..], state: dr.state.clone(), nonce: 0 };
+        let mut ok = SecureReader { inner: &wire[..], state: dr.state.clone(), nonce: 0, max_frame: MAX_FRAME };
         assert_eq!(ok.recv::<String>().await.unwrap(), "top-secret-task");
         // A flipped bit does not.
         let mut bad = wire.clone();
         *bad.last_mut().unwrap() ^= 1;
-        let mut r = SecureReader { inner: &bad[..], state: dr.state.clone(), nonce: 0 };
+        let mut r = SecureReader { inner: &bad[..], state: dr.state.clone(), nonce: 0, max_frame: MAX_FRAME };
         assert!(matches!(r.recv::<String>().await, Err(WireError::Noise(_))));
         // Replaying it at a later position (wrong nonce) does not.
-        let mut r = SecureReader { inner: &wire[..], state: dr.state.clone(), nonce: 1 };
+        let mut r = SecureReader { inner: &wire[..], state: dr.state.clone(), nonce: 1, max_frame: MAX_FRAME };
         assert!(matches!(r.recv::<String>().await, Err(WireError::Noise(_))));
+    }
+
+    #[tokio::test]
+    async fn frame_cap_follows_role() {
+        let big = "x".repeat(HANDSHAKE_FRAME + 1);
+        // Before authentication the cap is small.
+        let ((mut ar, _aw, _), (_br, mut bw, _)) = pair().await;
+        let (sent, got) = tokio::join!(bw.send(&big), ar.recv::<String>());
+        sent.unwrap();
+        assert!(matches!(got, Err(WireError::TooLarge(_))));
+        // Once the role allows it, the same frame is accepted.
+        let ((mut ar, _aw, _), (_br, mut bw, _)) = pair().await;
+        ar.set_max_frame(CLIENT_FRAME);
+        let (sent, got) = tokio::join!(bw.send(&big), ar.recv::<String>());
+        sent.unwrap();
+        assert_eq!(got.unwrap().len(), big.len());
+        // The cap can never be raised past the protocol maximum.
+        ar.set_max_frame(usize::MAX);
+        assert_eq!(ar.max_frame, MAX_FRAME);
     }
 
     #[tokio::test]
@@ -283,7 +346,7 @@ mod tests {
         let kb = key();
         let other = async move {
             let mut hs = Builder::new(NOISE_PARAMS.parse().unwrap())
-                .prologue(b"hotpan/1")
+                .prologue(b"hotpan/0")
                 .unwrap()
                 .local_private_key(&kb)
                 .unwrap()

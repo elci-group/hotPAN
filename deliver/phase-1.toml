@@ -1,0 +1,149 @@
+# Phase 1 — Protocol and control-plane hardening (docs/DIRECTIVE.md §5).
+# Extends Phase 0, so passing this gate re-proves Phase 0 and the base invariants.
+extends = "phase-0.toml"
+
+# P1.1 connection, handshake and node limits
+[[file]]
+path = "crates/hotpan-orchestrator/src/server.rs"
+require_regex = ["max_connections", "max_handshakes", "handshake_timeout", "try_acquire_owned", "connections_refused"]
+[[file]]
+path = "crates/hotpan-orchestrator/src/plane.rs"
+require_regex = ["max_nodes", "fabric is full", "advert\\.validate\\(&self\\.cfg\\.limits\\)"]
+[[command]]
+name = "flood + slowloris stay bounded (e2e)"
+cmd = ["cargo", "test", "-p", "hotpan-node", "--test", "fabric", "--", "--exact", "connection_flood_and_slowloris_are_bounded"]
+expect_exit = 0
+timeout_secs = 900
+stdout_contains = ["test connection_flood_and_slowloris_are_bounded ... ok"]
+[[command]]
+name = "fleet size cap"
+cmd = ["cargo", "test", "-p", "hotpan-orchestrator", "--lib", "--", "--exact", "plane::tests::fleet_size_is_capped"]
+expect_exit = 0
+timeout_secs = 900
+stdout_contains = ["plane::tests::fleet_size_is_capped ... ok"]
+
+# P1.2 bounded channels, slow-peer eviction
+[[file]]
+path = "crates/hotpan-orchestrator/src/server.rs"
+require_regex = ["mpsc::channel::<OrchMsg>", "TrySendError::Full", "peers_evicted"]
+[[file]]
+path = "crates/hotpan-node/src/agent.rs"
+require_regex = ["mpsc::channel::<NodeMsg>\\(OUTBOUND_QUEUE\\)"]
+[[command]]
+name = "slow peers are evicted"
+cmd = ["cargo", "test", "-p", "hotpan-orchestrator", "--lib", "--", "--exact", "server::tests::slow_peers_are_evicted_not_buffered"]
+expect_exit = 0
+timeout_secs = 900
+stdout_contains = ["server::tests::slow_peers_are_evicted_not_buffered ... ok"]
+# Unbounded channels must not come back in network-facing code.
+[[command]]
+name = "no unbounded channels in server or agent"
+cmd = ["grep", "-rn", "unbounded_channel", "crates/hotpan-orchestrator/src", "crates/hotpan-node/src"]
+expect_exit = 1
+timeout_secs = 60
+
+# P1.3 deadlines (handshake, idle, keepalive)
+[[file]]
+path = "crates/hotpan-node/src/agent.rs"
+require_regex = ["Silent\\(", "OrchMsg::Ping", "NodeMsg::Pong"]
+[[file]]
+path = "crates/hotpan-orchestrator/src/server.rs"
+require_regex = ["client_idle_timeout", "ping_all"]
+[[command]]
+name = "node dissolves when control plane goes silent (e2e)"
+cmd = ["cargo", "test", "-p", "hotpan-node", "--test", "fabric", "--", "--exact", "node_dissolves_when_control_plane_goes_silent"]
+expect_exit = 0
+timeout_secs = 900
+stdout_contains = ["test node_dissolves_when_control_plane_goes_silent ... ok"]
+
+# P1.4 strict validation
+[[file]]
+path = "crates/hotpan-core/src/validate.rs"
+required = true
+require_regex = ["pub struct Limits", "max_output_bytes", "fn validate\\(&self, l: &Limits\\)", "is_finite"]
+[[command]]
+name = "hostile adverts and lying heartbeats are refused"
+cmd = ["cargo", "test", "-p", "hotpan-orchestrator", "--lib", "--", "hostile_advertisements_are_refused", "lying_heartbeat_ejects_the_node", "oversized_jobs_are_rejected_up_front"]
+expect_exit = 0
+timeout_secs = 900
+stdout_contains = ["hostile_advertisements_are_refused ... ok", "lying_heartbeat_ejects_the_node_and_requeues_its_work ... ok", "oversized_jobs_are_rejected_up_front ... ok"]
+[[file]]
+path = "crates/hotpan-wire/src/secure.rs"
+require_regex = ["pub fn set_max_frame", "HANDSHAKE_FRAME", "CLIENT_FRAME", "preallocated"]
+
+# P1.5 quotas
+[[file]]
+path = "crates/hotpan-orchestrator/src/plane.rs"
+require_regex = ["max_jobs_per_client", "max_active_jobs", "max_retained_jobs", "SubmitError::Quota"]
+[[command]]
+name = "quotas follow client identity (e2e)"
+cmd = ["cargo", "test", "-p", "hotpan-node", "--test", "fabric", "--", "--exact", "quotas_follow_client_identity_over_the_wire"]
+expect_exit = 0
+timeout_secs = 900
+stdout_contains = ["test quotas_follow_client_identity_over_the_wire ... ok"]
+
+# P1.6 no panics reachable from peer input (lint-enforced)
+[[file]]
+path = "crates/hotpan-wire/src/lib.rs"
+require_regex = ["deny\\(clippy::unwrap_used, clippy::expect_used, clippy::panic\\)"]
+[[file]]
+path = "crates/hotpan-orchestrator/src/lib.rs"
+require_regex = ["deny\\(clippy::unwrap_used, clippy::expect_used, clippy::panic\\)"]
+[[file]]
+path = "crates/hotpan-node/src/lib.rs"
+require_regex = ["deny\\(clippy::unwrap_used, clippy::expect_used, clippy::panic\\)"]
+[[file]]
+path = "crates/hotpan-seal/src/lib.rs"
+require_regex = ["deny\\(clippy::unwrap_used, clippy::expect_used, clippy::panic\\)"]
+
+# P1.7 property tests
+[[file]]
+path = "crates/hotpan-core/src/props.rs"
+required = true
+require_regex = ["proptest!", "lifecycle_history_is_always_legal"]
+[[file]]
+path = "crates/hotpan-heuristic/src/props.rs"
+required = true
+require_regex = ["proptest!", "plans_respect_slots_eligibility_and_exclusions"]
+[[file]]
+path = "crates/hotpan-wire/src/props.rs"
+required = true
+require_regex = ["proptest!", "secure_channel_rejects_any_corruption"]
+
+# P1.8 fuzz targets + smoke runs (nightly cargo-fuzz)
+[[file]]
+path = "fuzz/Cargo.toml"
+required = true
+require_regex = ["cargo-fuzz = true", "wire_messages", "job_spec", "frame_decode"]
+[[command]]
+name = "fuzz smoke: wire_messages"
+cmd = ["cargo", "+nightly", "fuzz", "run", "wire_messages", "--", "-max_total_time=10", "-rss_limit_mb=2048"]
+expect_exit = 0
+timeout_secs = 900
+stderr_contains = ["Done "]
+[[command]]
+name = "fuzz smoke: job_spec"
+cmd = ["cargo", "+nightly", "fuzz", "run", "job_spec", "--", "-max_total_time=10", "-rss_limit_mb=2048"]
+expect_exit = 0
+timeout_secs = 900
+stderr_contains = ["Done "]
+[[command]]
+name = "fuzz smoke: frame_decode"
+cmd = ["cargo", "+nightly", "fuzz", "run", "frame_decode", "--", "-max_total_time=10", "-rss_limit_mb=2048"]
+expect_exit = 0
+timeout_secs = 900
+stderr_contains = ["Done "]
+
+# Docs and drift guard
+[[file]]
+path = "docs/ARCHITECTURE.md"
+require_regex = ["## Bounds and overload"]
+[[file]]
+path = "docs/PHASE_LOG.md"
+require_regex = ["## Phase 1"]
+[[file]]
+path = "docs/ROADMAP.md"
+require_regex = [
+  "\\[x\\] P1\\.1 ", "\\[x\\] P1\\.2 ", "\\[x\\] P1\\.3 ", "\\[x\\] P1\\.4 ",
+  "\\[x\\] P1\\.5 ", "\\[x\\] P1\\.6 ", "\\[x\\] P1\\.7 ", "\\[x\\] P1\\.8 ",
+]

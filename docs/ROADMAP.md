@@ -32,14 +32,14 @@ passes.
 - [x] P0.8 Phase log and evidence capture
 
 ## Phase 1 — Protocol and control-plane hardening
-- [ ] P1.1 Connection, handshake and node limits with refusal on overload
-- [ ] P1.2 Bounded outbound channels with back-pressure and slow-peer eviction
-- [ ] P1.3 Handshake, idle and request deadlines
-- [ ] P1.4 Strict validation of advertisements, heartbeats and job specs
-- [ ] P1.5 Per-client job and fragment quotas
-- [ ] P1.6 No panics reachable from peer input
-- [ ] P1.7 Property tests for codec, secure channel and lifecycle
-- [ ] P1.8 Fuzz targets for frame and message decoding with smoke runs
+- [x] P1.1 Connection, handshake and node limits with refusal on overload
+- [x] P1.2 Bounded outbound channels with back-pressure and slow-peer eviction
+- [x] P1.3 Handshake, idle and request deadlines
+- [x] P1.4 Strict validation of advertisements, heartbeats and job specs
+- [x] P1.5 Per-client job and fragment quotas
+- [x] P1.6 No panics reachable from peer input
+- [x] P1.7 Property tests for codec, secure channel and lifecycle
+- [x] P1.8 Fuzz targets for frame and message decoding with smoke runs
 
 ## Phase 2 — Observability and operations
 - [ ] P2.1 Validated orchestrator configuration file

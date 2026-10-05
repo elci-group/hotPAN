@@ -172,6 +172,7 @@ impl NodeCore {
             truncated: report.truncated,
             wall_ms: report.wall_ms,
         };
+        #[allow(clippy::expect_used)] // plain struct of strings and integers: cannot fail
         let plain = serde_json::to_vec(&payload).expect("payload serializes");
         let attestation = attest(&self.id.keys, lease_id, &prep.grant.fragment_id, self.id.node_id, &plain);
         match seal(&self.orch.kex, lease_id.0.as_bytes(), &plain) {
@@ -244,7 +245,7 @@ impl ProtectionGuard {
         if now_millis() >= self.expires_at {
             return Some("lease expired".into());
         }
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = hotpan_core::lock(&self.cache);
         if let Some((at, verdict)) = cache.as_ref() {
             if at.elapsed() < RESAMPLE {
                 return verdict.clone();

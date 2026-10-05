@@ -10,8 +10,11 @@
 //! is lost; its leases are revoked and their fragments rescheduled elsewhere.
 
 #![forbid(unsafe_code)]
+// No panics reachable from peer input (DIRECTIVE P1.6): fallible paths
+// return errors; the few infallible serializations carry a local allow.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod plane;
 pub mod server;
 
-pub use plane::{ControlPlane, Event, EventKind, Outbound, PlaneConfig};
+pub use plane::{ControlPlane, Event, EventKind, Outbound, PlaneConfig, SubmitError};

@@ -51,7 +51,7 @@ pub struct ResourceCeiling {
 
 impl Default for ResourceCeiling {
     fn default() -> Self {
-        Self { wall_ms: 30_000, cpu_ms: 30_000, memory_mb: 256, output_bytes: 1 << 20 }
+        Self { wall_ms: 30_000, cpu_ms: 30_000, memory_mb: 256, output_bytes: 256 << 10 }
     }
 }
 
@@ -148,17 +148,35 @@ pub enum SpecError {
     DuplicateFragment(String),
     #[error("fragment `{0}` has a zero resource ceiling")]
     ZeroCeiling(String),
-    #[error("max_attempts must be >= 1")]
+    #[error("max_attempts must be 1..=16")]
     NoAttempts,
+    #[error("job has more than {0} fragments")]
+    TooManyFragments(usize),
+    #[error(transparent)]
+    Invalid(#[from] crate::Invalid),
 }
 
 impl JobSpec {
     pub fn validate(&self) -> Result<(), SpecError> {
+        self.validate_with(&crate::Limits::default())
+    }
+
+    pub fn validate_with(&self, l: &crate::Limits) -> Result<(), SpecError> {
         if self.fragments.is_empty() {
             return Err(SpecError::Empty);
         }
-        if self.max_attempts == 0 {
+        if self.fragments.len() > l.max_fragments {
+            return Err(SpecError::TooManyFragments(l.max_fragments));
+        }
+        if self.max_attempts == 0 || self.max_attempts > 16 {
             return Err(SpecError::NoAttempts);
+        }
+        if self.name.is_empty() || self.name.len() > l.max_label || self.name.chars().any(char::is_control) {
+            return Err(crate::Invalid {
+                field: "name".into(),
+                reason: format!("1..={} printable bytes", l.max_label),
+            }
+            .into());
         }
         let mut seen = BTreeSet::new();
         for f in &self.fragments {
@@ -169,6 +187,7 @@ impl JobSpec {
             if c.wall_ms == 0 || c.cpu_ms == 0 || c.memory_mb == 0 || c.output_bytes == 0 {
                 return Err(SpecError::ZeroCeiling(f.id.clone()));
             }
+            f.validate_with(l)?;
         }
         Ok(())
     }
