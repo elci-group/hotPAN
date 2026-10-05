@@ -1,8 +1,10 @@
 [package]
+publish = false
 name = "hotpan-heuristic"
 description = "hotPAN heuristic scoring and comparative-advantage assignment"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

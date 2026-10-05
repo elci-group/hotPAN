@@ -13,6 +13,12 @@
 //! * **protection** — a guard callback polled during execution; when it
 //!   returns a reason (battery dropped, device heating, lease revoked) the
 //!   work is stopped immediately and reported as preempted.
+//!
+//! This is the only hotPAN crate permitted `unsafe` (for `setrlimit`,
+//! `setsid` and process-group `kill`). Every block must carry a `SAFETY:`
+//! comment; the lints below make that a build error.
+
+#![deny(clippy::undocumented_unsafe_blocks, unsafe_op_in_unsafe_fn)]
 
 mod builtin;
 mod exec;

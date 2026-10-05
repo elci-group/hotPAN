@@ -9,6 +9,8 @@
 //! It assumes nothing about node persistence. A node that misses heartbeats
 //! is lost; its leases are revoked and their fragments rescheduled elsewhere.
 
+#![forbid(unsafe_code)]
+
 mod plane;
 pub mod server;
 

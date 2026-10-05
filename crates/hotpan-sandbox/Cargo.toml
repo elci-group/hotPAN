@@ -1,8 +1,10 @@
 [package]
+publish = false
 name = "hotpan-sandbox"
 description = "hotPAN node-side execution: allowlisted, rlimit-bounded, preemptible, purgeable"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

@@ -11,6 +11,8 @@
 //! [`read_frame`]/[`write_frame`] are the plaintext length-prefixed JSON
 //! codec, used only beneath the secure layer and in tests.
 
+#![forbid(unsafe_code)]
+
 use hotpan_core::*;
 use hotpan_sandbox::{Outcome, PurgeReceipt};
 use hotpan_seal::{Attestation, Envelope, PublicKeys, SignedLease};

@@ -1,8 +1,10 @@
 [package]
+publish = false
 name = "hotpan-core"
 description = "hotPAN core model: capability vectors, workloads, leases and the transient-node lifecycle"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

@@ -1,0 +1,62 @@
+# Invariants every phase must keep (docs/DIRECTIVE.md §2–§3).
+# Every phase spec extends this file, directly or through earlier phases.
+
+[[command]]
+name = "rustfmt clean"
+cmd = ["cargo", "fmt", "--all", "--check"]
+expect_exit = 0
+timeout_secs = 120
+
+[[command]]
+name = "clippy clean with -D warnings"
+cmd = ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
+expect_exit = 0
+timeout_secs = 1200
+weight = 2.0
+
+[[command]]
+name = "workspace tests pass"
+cmd = ["cargo", "test", "--workspace"]
+expect_exit = 0
+timeout_secs = 1800
+stdout_contains = ["test result: ok"]
+weight = 4.0
+
+# grep exits 1 when nothing matches: that is the passing case.
+[[command]]
+name = "no TODO/FIXME/unimplemented/todo in shipped crates"
+cmd = ["grep", "-rnE", "TODO|FIXME|unimplemented!|todo!\\(", "crates", "--include=*.rs"]
+expect_exit = 1
+timeout_secs = 60
+
+[[command]]
+name = "unsafe confined to hotpan-sandbox"
+cmd = ["grep", "-rlE", "unsafe \\{|unsafe fn|unsafe impl|unsafe trait", "crates", "--include=*.rs", "--exclude-dir=hotpan-sandbox"]
+expect_exit = 1
+timeout_secs = 60
+
+[[file]]
+path = "Cargo.lock"
+required = true
+
+[[file]]
+path = "README.md"
+required = true
+min_size_bytes = 2000
+require_regex = ["hotPAN", "observe → score → promote", "docs/ROADMAP.md"]
+
+[[file]]
+path = "docs/ARCHITECTURE.md"
+required = true
+min_size_bytes = 2000
+
+[[file]]
+path = "docs/DIRECTIVE.md"
+required = true
+min_size_bytes = 4000
+require_regex = ["## 4\\. Deliver integration", "## 5\\. Phases", "Honesty clause"]
+
+[[file]]
+path = "docs/ROADMAP.md"
+required = true
+min_size_bytes = 1500

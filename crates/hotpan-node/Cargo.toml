@@ -1,8 +1,10 @@
 [package]
+publish = false
 name = "hotpan-node"
 description = "hotPAN node agent: turns a device into a transient, outbound-only execution node"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

@@ -1,8 +1,10 @@
 [package]
+publish = false
 name = "hotpan-probe"
 description = "hotPAN device capability probing (Linux sysfs, Android/Termux) and scripted probes"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

@@ -6,6 +6,8 @@
 //! camera capture. Protection gates (battery, thermal) are hard: no score can
 //! buy its way past them.
 
+#![forbid(unsafe_code)]
+
 mod assign;
 mod score;
 

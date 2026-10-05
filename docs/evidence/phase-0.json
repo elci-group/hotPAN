@@ -1,0 +1,213 @@
+{
+  "pass": true,
+  "checks": [
+    {
+      "name": "file: Cargo.lock",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (37726 bytes)"
+    },
+    {
+      "name": "file: README.md",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (5687 bytes)"
+    },
+    {
+      "name": "file: docs/ARCHITECTURE.md",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (5991 bytes)"
+    },
+    {
+      "name": "file: docs/DIRECTIVE.md",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (10543 bytes)"
+    },
+    {
+      "name": "file: docs/ROADMAP.md",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (4923 bytes)"
+    },
+    {
+      "name": "file: deliver.toml",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (195 bytes)"
+    },
+    {
+      "name": "file: kaptaind.toml",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (3202 bytes)"
+    },
+    {
+      "name": "file: Cargo.toml",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (1579 bytes)"
+    },
+    {
+      "name": "file: deny.toml",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (962 bytes)"
+    },
+    {
+      "name": "file: crates/hotpan-core/src/lib.rs",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (1117 bytes)"
+    },
+    {
+      "name": "file: crates/hotpan-heuristic/src/lib.rs",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (600 bytes)"
+    },
+    {
+      "name": "file: crates/hotpan-seal/src/lib.rs",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (2007 bytes)"
+    },
+    {
+      "name": "file: crates/hotpan-probe/src/lib.rs",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (18221 bytes)"
+    },
+    {
+      "name": "file: crates/hotpan-wire/src/lib.rs",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (6994 bytes)"
+    },
+    {
+      "name": "file: crates/hotpan-orchestrator/src/lib.rs",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (650 bytes)"
+    },
+    {
+      "name": "file: crates/hotpan-node/src/lib.rs",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (589 bytes)"
+    },
+    {
+      "name": "file: crates/hotpan-cli/src/main.rs",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (15112 bytes)"
+    },
+    {
+      "name": "file: crates/hotpan-sandbox/src/lib.rs",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (4441 bytes)"
+    },
+    {
+      "name": "file: .github/workflows/ci.yml",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (2343 bytes)"
+    },
+    {
+      "name": "file: SECURITY.md",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (1608 bytes)"
+    },
+    {
+      "name": "file: CONTRIBUTING.md",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (1516 bytes)"
+    },
+    {
+      "name": "file: CHANGELOG.md",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (1158 bytes)"
+    },
+    {
+      "name": "file: docs/PHASE_LOG.md",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (1018 bytes)"
+    },
+    {
+      "name": "file: scripts/close-phase.sh",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (1326 bytes)"
+    },
+    {
+      "name": "file: docs/ROADMAP.md",
+      "pass": true,
+      "kind": "file",
+      "message": "OK (4923 bytes)"
+    },
+    {
+      "name": "rustfmt clean",
+      "pass": true,
+      "kind": "command",
+      "message": "OK (exit 0, 302 ms)"
+    },
+    {
+      "name": "clippy clean with -D warnings",
+      "pass": true,
+      "kind": "command",
+      "message": "OK (exit 0, 810 ms)",
+      "weight": 2.0
+    },
+    {
+      "name": "workspace tests pass",
+      "pass": true,
+      "kind": "command",
+      "message": "OK (exit 0, 64244 ms)",
+      "weight": 4.0
+    },
+    {
+      "name": "no TODO/FIXME/unimplemented/todo in shipped crates",
+      "pass": true,
+      "kind": "command",
+      "message": "OK (exit 1, 51 ms)"
+    },
+    {
+      "name": "unsafe confined to hotpan-sandbox",
+      "pass": true,
+      "kind": "command",
+      "message": "OK (exit 1, 51 ms)"
+    },
+    {
+      "name": "MSRV 1.88 builds the workspace",
+      "pass": true,
+      "kind": "command",
+      "message": "OK (exit 0, 30888 ms)",
+      "weight": 2.0
+    },
+    {
+      "name": "cargo-deny: advisories, bans, licenses, sources",
+      "pass": true,
+      "kind": "command",
+      "message": "OK (exit 0, 802 ms)"
+    },
+    {
+      "name": "cargo-audit: no known vulnerabilities",
+      "pass": true,
+      "kind": "command",
+      "message": "OK (exit 0, 903 ms)"
+    },
+    {
+      "name": "directory: deliver",
+      "pass": true,
+      "kind": "directory",
+      "message": "OK (2 files)"
+    }
+  ],
+  "duration_ms": 98067
+}

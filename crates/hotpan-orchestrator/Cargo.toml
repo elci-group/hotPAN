@@ -1,8 +1,10 @@
 [package]
+publish = false
 name = "hotpan-orchestrator"
 description = "hotPAN control plane: registry, scheduling, lease lifecycle, rescheduling on node loss"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

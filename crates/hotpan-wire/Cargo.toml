@@ -1,8 +1,10 @@
 [package]
+publish = false
 name = "hotpan-wire"
 description = "hotPAN wire protocol: length-prefixed JSON frames and message types"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

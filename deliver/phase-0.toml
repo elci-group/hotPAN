@@ -1,0 +1,129 @@
+# Phase 0 — Delivery governance (docs/DIRECTIVE.md §5, docs/ROADMAP.md).
+extends = "base.toml"
+
+# P0.1 cumulative hierarchy + live gate
+[[file]]
+path = "deliver.toml"
+required = true
+require_regex = ["^extends = \"deliver/phase-[0-7]\\.toml\""]
+
+[[directory]]
+path = "deliver"
+required = true
+min_files = 2
+
+# P0.2 kaptaind commit gate is Deliver
+[[file]]
+path = "kaptaind.toml"
+required = true
+require_regex = ["command = \"deliver --spec deliver\\.toml --strict\"", "required = true"]
+
+# P0.3 MSRV declared and verified
+[[file]]
+path = "Cargo.toml"
+required = true
+require_regex = ["rust-version = \"1\\.88\"", "resolver = \"3\""]
+
+[[command]]
+name = "MSRV 1.88 builds the workspace"
+cmd = ["cargo", "+1.88.0", "check", "--workspace", "--all-targets", "--locked"]
+env = { CARGO_TARGET_DIR = "target/msrv" }
+expect_exit = 0
+timeout_secs = 1800
+weight = 2.0
+
+# P0.4 supply chain (offline here for a deterministic gate; CI also runs online)
+[[file]]
+path = "deny.toml"
+required = true
+require_toml_keys = ["licenses.allow", "advisories", "bans.wildcards", "sources.unknown-registry"]
+
+[[command]]
+name = "cargo-deny: advisories, bans, licenses, sources"
+cmd = ["cargo", "deny", "--offline", "check"]
+expect_exit = 0
+timeout_secs = 300
+
+[[command]]
+name = "cargo-audit: no known vulnerabilities"
+cmd = ["cargo", "audit", "--no-fetch", "--stale"]
+expect_exit = 0
+timeout_secs = 300
+
+# P0.5 unsafe policy (compile-enforced; the files must carry the attributes)
+[[file]]
+path = "crates/hotpan-core/src/lib.rs"
+require_regex = ["#!\\[forbid\\(unsafe_code\\)\\]"]
+[[file]]
+path = "crates/hotpan-heuristic/src/lib.rs"
+require_regex = ["#!\\[forbid\\(unsafe_code\\)\\]"]
+[[file]]
+path = "crates/hotpan-seal/src/lib.rs"
+require_regex = ["#!\\[forbid\\(unsafe_code\\)\\]"]
+[[file]]
+path = "crates/hotpan-probe/src/lib.rs"
+require_regex = ["#!\\[forbid\\(unsafe_code\\)\\]"]
+[[file]]
+path = "crates/hotpan-wire/src/lib.rs"
+require_regex = ["#!\\[forbid\\(unsafe_code\\)\\]"]
+[[file]]
+path = "crates/hotpan-orchestrator/src/lib.rs"
+require_regex = ["#!\\[forbid\\(unsafe_code\\)\\]"]
+[[file]]
+path = "crates/hotpan-node/src/lib.rs"
+require_regex = ["#!\\[forbid\\(unsafe_code\\)\\]"]
+[[file]]
+path = "crates/hotpan-cli/src/main.rs"
+require_regex = ["#!\\[forbid\\(unsafe_code\\)\\]"]
+[[file]]
+path = "crates/hotpan-sandbox/src/lib.rs"
+require_regex = ["#!\\[deny\\(clippy::undocumented_unsafe_blocks, unsafe_op_in_unsafe_fn\\)\\]"]
+
+# P0.6 CI
+[[file]]
+path = ".github/workflows/ci.yml"
+required = true
+require_regex = [
+  "cargo fmt --all --check",
+  "-D warnings",
+  "toolchain: 1\\.88\\.0",
+  "cargo-deny-action",
+  "cargo audit",
+  "deliver --spec deliver\\.toml --strict --format sarif",
+  "upload-sarif",
+]
+yaml_schema = '{"type":"object","required":["name","on","jobs"],"properties":{"jobs":{"type":"object","required":["lint","test","msrv","supply-chain","deliver"]}}}'
+
+# P0.7 project hygiene
+[[file]]
+path = "SECURITY.md"
+required = true
+min_size_bytes = 600
+require_regex = ["Reporting a vulnerability", "Supported versions"]
+[[file]]
+path = "CONTRIBUTING.md"
+required = true
+min_size_bytes = 600
+require_regex = ["deliver --spec deliver\\.toml --strict", "kaptaind"]
+[[file]]
+path = "CHANGELOG.md"
+required = true
+require_regex = ["## \\[0\\.2\\.", "## \\[0\\.1\\.0\\]"]
+
+# P0.8 phase log + evidence tooling
+[[file]]
+path = "docs/PHASE_LOG.md"
+required = true
+require_regex = ["## Phase 0"]
+[[file]]
+path = "scripts/close-phase.sh"
+required = true
+require_regex = ["deliver --spec \"deliver/phase-\\$\\{?N\\}?\\.toml\" --strict --format json"]
+
+# Drift guard: the roadmap ticks every Phase 0 item.
+[[file]]
+path = "docs/ROADMAP.md"
+require_regex = [
+  "\\[x\\] P0\\.1 ", "\\[x\\] P0\\.2 ", "\\[x\\] P0\\.3 ", "\\[x\\] P0\\.4 ",
+  "\\[x\\] P0\\.5 ", "\\[x\\] P0\\.6 ", "\\[x\\] P0\\.7 ", "\\[x\\] P0\\.8 ",
+]

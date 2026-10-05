@@ -1,8 +1,10 @@
 [package]
+publish = false
 name = "hotpan-seal"
 description = "hotPAN ephemeral authority: signed capability-scoped leases, sealed envelopes, result attestation"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

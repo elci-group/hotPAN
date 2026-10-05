@@ -1,0 +1,3 @@
+extends = "deliver/phase-0.toml"
+# The live gate: always extends the highest *completed* phase. kaptaind runs
+# this before every commit, and CI runs it on every push. See docs/DIRECTIVE.md §4.

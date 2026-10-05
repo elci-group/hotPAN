@@ -55,7 +55,7 @@ min_commit_interval = 10
 execution = "trusted"
 
 [test]
-command = "cargo test"
+command = "deliver --spec deliver.toml --strict"
 required = true
 
 [staging]

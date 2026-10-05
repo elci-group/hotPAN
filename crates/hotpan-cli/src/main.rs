@@ -1,5 +1,7 @@
 //! `hotpan` — Heuristically Orchestrated Transient Phone-as-Node.
 
+#![forbid(unsafe_code)]
+
 mod config;
 mod sim;
 

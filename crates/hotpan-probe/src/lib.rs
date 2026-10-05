@@ -6,6 +6,8 @@
 //! activity, modest thermal headroom) rather than optimistically.
 //! [`ScriptedProbe`] lets simulations and tests drive a vector by hand.
 
+#![forbid(unsafe_code)]
+
 use hotpan_core::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;

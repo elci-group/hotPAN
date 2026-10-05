@@ -9,6 +9,8 @@
 //!   (X25519 + ChaCha20-Poly1305, bound to the lease id).
 //! * [`Attestation`] — the node's signature over the digest of what it returned.
 
+#![forbid(unsafe_code)]
+
 mod attest;
 mod envelope;
 mod keys;

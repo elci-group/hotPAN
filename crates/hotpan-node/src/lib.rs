@@ -5,6 +5,8 @@
 //! control plane goes away it cancels and purges everything it holds. There
 //! is no "resume": a reconnecting device is a new node.
 
+#![forbid(unsafe_code)]
+
 mod agent;
 mod client;
 mod core;

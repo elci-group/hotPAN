@@ -7,6 +7,8 @@
 //! shares: what a device can do ([`CapabilityVector`]), what work wants
 //! ([`FragmentSpec`]), and the lifecycle a lease walks through ([`Lifecycle`]).
 
+#![forbid(unsafe_code)]
+
 pub mod capability;
 pub mod ids;
 pub mod lifecycle;
