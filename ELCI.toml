@@ -1,0 +1,36 @@
+# Staged by portfolio alignment 2026-10-20; NOT yet written to the repository.
+# Requires human review (§38): class, maturity, and relationships are proposals.
+schema = 1
+
+[project]
+name = "hotPAN"
+class = "research"
+maturity = "M2"
+status = "active"
+description = "hotPAN is a just-in-time compute fabric: it heuristically promotes phones and other devices into transient, sandboxed execution nodes for exactly the workload fragments they best fit, then purges and dissolves the node."
+owner = "elci-group"
+criticality = "low"
+
+[interfaces]
+cli = false
+library = false
+http = false
+event_producer = false   # TODO confirm (§10)
+event_consumer = false   # TODO confirm (§10)
+
+[portfolio]
+supersedes = []
+superseded_by = []
+related = []
+depends_on = []          # TODO populate (§23)
+consumed_by = []         # TODO populate (§23)
+
+[maintenance]
+review_interval_days = 60
+last_reviewed = "2026-10-20"
+
+# Central extension (ELCI-PH-001 §5 allows; satisfies §19/§31)
+[language]
+edition = "2021"
+msrv = "1.88"
+version = "0.2.0"
